@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "timellama"
+version = "0.1.0"
+description = "CLI for Productive.io time tracking with calendar sync, team hours review, and local LLM support"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Adam Chrabaszcz" }
+]
+keywords = ["productive", "time-tracking", "calendar", "ollama", "mcp", "cli", "invoicing", "hours"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Scheduling",
+]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "productive-time-mcp>=0.1.0",
+    "ics-calendar-mcp>=0.1.0",
+    "ollama>=0.4.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+timellama = "timellama.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/achrabaszcz/timellama"
+Repository = "https://github.com/achrabaszcz/timellama"
+Issues = "https://github.com/achrabaszcz/timellama/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/timellama"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
