@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -46,10 +47,11 @@ class MCPClient:
     @asynccontextmanager
     async def connect(self):
         """Connect to both MCP servers."""
-        # Build server parameters
+        # Build server parameters using sys.executable -m to ensure we use
+        # the same Python environment where timellama is installed (works with pipx)
         productive_params = StdioServerParameters(
-            command="productive-time-mcp",
-            args=[],
+            command=sys.executable,
+            args=["-m", "productive_time_mcp"],
             env={
                 **os.environ,
                 "PRODUCTIVE_API_TOKEN": os.environ.get("PRODUCTIVE_API_TOKEN", ""),
@@ -62,8 +64,8 @@ class MCPClient:
         )
 
         calendar_params = StdioServerParameters(
-            command="ics-calendar-mcp",
-            args=[],
+            command=sys.executable,
+            args=["-m", "ics_calendar_mcp"],
             env={
                 **os.environ,
                 "ICS_CALENDAR_URL": os.environ.get("ICS_CALENDAR_URL", ""),
