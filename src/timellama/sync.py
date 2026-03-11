@@ -98,12 +98,9 @@ async def sync_today(
             message=f"Calendar error: {calendar_error}",
         )
 
-    # Filter out "busy" events using raw data filter
-    filtered_result = extract_action_data(events, "filter_events")
-    if filtered_result.get("success") and filtered_result.get("data"):
-        filtered_events = filtered_result["data"]
-    else:
-        filtered_events = _filter_events_raw(events)
+    # Filter out "busy" events using deterministic filter
+    # (Ollama filtering was inconsistent, so we use simple keyword matching)
+    filtered_events = _filter_events_raw(events)
 
     # Format events to HTML using raw formatter
     html_note = format_events_to_html_from_raw(filtered_events)
@@ -151,7 +148,9 @@ async def sync_today(
                 entry_date = entry.get("date")
                 if entry_date is None or entry_date == today_str or str(entry_date).startswith(today_str):
                     today_entry = entry
-                    entry_id = entry.get("id")
+                    # Parse numeric ID from report format: "time-entry-report-...-137120906-hash"
+                    full_id = entry.get("id", "")
+                    entry_id = _extract_numeric_id(full_id)
                     break
 
     except Exception:
@@ -445,7 +444,9 @@ async def add_item_to_today(client: MCPClient, item: str) -> SyncResult:
                 entry_date = entry.get("date")
                 if entry_date is None or entry_date == today_str or str(entry_date).startswith(today_str):
                     today_entry = entry
-                    entry_id = entry.get("id")
+                    # Parse numeric ID from report format
+                    full_id = entry.get("id", "")
+                    entry_id = _extract_numeric_id(full_id)
                     # Extract note using Ollama
                     note_result = extract_action_data(entry, "get_note")
                     if note_result.get("success") and note_result.get("data"):
@@ -562,6 +563,25 @@ def _extract_time(dt_string: str) -> str:
     if ":" in dt_string:
         return dt_string[:5]
     return dt_string
+
+
+def _extract_numeric_id(full_id: str) -> str:
+    """Extract numeric entry ID from report format.
+
+    Report IDs look like: "time-entry-report-time_entry-137120906-e9036a78aaab..."
+    The actual entry ID is the numeric part: "137120906"
+    """
+    if not full_id:
+        return ""
+    # If it's already just a number, return it
+    if full_id.isdigit():
+        return full_id
+    # Parse from report format
+    parts = full_id.split("-")
+    for part in reversed(parts):
+        if part.isdigit():
+            return part
+    return full_id  # Fallback to original
 
 
 def _filter_events(events: list[CalendarEvent]) -> list[CalendarEvent]:

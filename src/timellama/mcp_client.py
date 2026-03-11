@@ -464,7 +464,7 @@ class MCPClient:
         if not self._productive_session:
             raise RuntimeError("Not connected to productive server")
 
-        args: dict[str, Any] = {"id": entry_id}
+        args: dict[str, Any] = {"entry_id": entry_id}
         if time_minutes is not None:
             # Convert minutes to hours for the MCP server
             args["hours"] = time_minutes / 60
