@@ -135,8 +135,10 @@ class MCPClient:
 
         try:
             data = json.loads(result)
-            if isinstance(data, list):
-                for event in data:
+            # Handle both list format and dict with 'events' key
+            event_list = data.get("events", data) if isinstance(data, dict) else data
+            if isinstance(event_list, list):
+                for event in event_list:
                     events.append(
                         CalendarEvent(
                             summary=event.get("summary", "Unknown"),
@@ -241,8 +243,10 @@ class MCPClient:
 
         try:
             data = json.loads(result)
-            if isinstance(data, list):
-                for entry in data:
+            # Handle both list format and dict with 'entries' key
+            entry_list = data.get("entries", data) if isinstance(data, dict) else data
+            if isinstance(entry_list, list):
+                for entry in entry_list:
                     entries.append(
                         TimeEntry(
                             id=entry.get("id", ""),
