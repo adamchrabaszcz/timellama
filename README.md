@@ -37,12 +37,12 @@ TimeLlama helps you manage time tracking in Productive.io—sync calendar events
 
 ```bash
 # Via pipx (recommended - isolated environment)
-pipx install git+https://github.com/achrabaszcz/timellama.git
+pipx install timellama
 
 # Or via pip
-pip install git+https://github.com/achrabaszcz/timellama.git
+pip install timellama
 
-# Or clone and install locally
+# Or install from source
 git clone https://github.com/achrabaszcz/timellama.git
 cd timellama
 pip install -e .
