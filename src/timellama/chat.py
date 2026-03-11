@@ -21,7 +21,15 @@ from timellama.ollama_client import (
     format_for_display,
     get_config,
 )
-from timellama.sync import add_item_to_today, get_today_status, sync_today
+from timellama.sync import (
+    add_item_to_today,
+    clear_note_today,
+    get_today_status,
+    remove_item_from_today,
+    set_note_today,
+    substitute_item_today,
+    sync_today,
+)
 
 
 # Tool definitions for Ollama
@@ -110,7 +118,7 @@ CHAT_TOOLS = [
         "type": "function",
         "function": {
             "name": "add_item",
-            "description": "Add an item to today's time entry note. Use when user wants to add something to their log.",
+            "description": "Add/append an item to today's time entry note. Preserves existing items. Use when user wants to add something to their log.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -120,6 +128,73 @@ CHAT_TOOLS = [
                     },
                 },
                 "required": ["item"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_item",
+            "description": "Remove an item from today's time entry note. Use when user wants to delete something from their log.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Text pattern to match and remove (case-insensitive partial match)",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "substitute_item",
+            "description": "Replace an item in today's time entry note with new text. Use when user wants to change/update an existing item.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "old_pattern": {
+                        "type": "string",
+                        "description": "Text pattern to match and replace (case-insensitive partial match)",
+                    },
+                    "new_item": {
+                        "type": "string",
+                        "description": "New item text to replace with",
+                    },
+                },
+                "required": ["old_pattern", "new_item"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_note",
+            "description": "Clear all items from today's time entry note. Use when user wants to start fresh or remove everything.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_note",
+            "description": "Set/overwrite today's time entry note completely. Use when user wants to replace the entire note with specific content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note": {
+                        "type": "string",
+                        "description": "Full note content (plain text or HTML list)",
+                    },
+                },
+                "required": ["note"],
             },
         },
     },
@@ -168,14 +243,24 @@ You have access to these tools:
 - get_my_hours: Get YOUR hours summary for a period
 - get_employee_hours: Get ANY employee's hours and work log by name
 - get_today_status: Get combined status (events + time entry)
-- sync_calendar: Sync calendar events to time entry
-- add_item: Add an item to today's time log
+- sync_calendar: Sync calendar events to time entry (overwrites note with calendar events)
+- add_item: APPEND an item to today's time log (preserves existing items)
+- remove_item: Delete an item from today's log by pattern match
+- substitute_item: Replace an item with new text
+- clear_note: Remove all items from today's note
+- set_note: Overwrite the entire note with new content
 - format_events_to_html: Preview HTML formatting of events
+
+Note operations:
+- "add" or "append" → use add_item (preserves existing)
+- "remove", "delete" → use remove_item
+- "replace", "change", "update" → use substitute_item
+- "clear", "reset", "start fresh" → use clear_note
+- "set", "overwrite" → use set_note
 
 When the user asks about their own status/hours, use get_my_hours or get_today_status.
 When they ask about another person (e.g., "What did John work on?", "Show me Sarah's hours"), use get_employee_hours.
-When they ask to sync or update, use sync_calendar.
-When they want to add something to their log, use add_item.
+When they ask to sync or update from calendar, use sync_calendar.
 
 Be concise in your responses. Format data nicely when presenting it.
 When showing work logs, list the entries with dates and notes.
@@ -235,6 +320,44 @@ async def execute_tool(client: MCPClient, tool_name: str, arguments: dict) -> di
             if not item:
                 return {"success": False, "error": "No item text provided"}
             result = await add_item_to_today(client, item)
+            return {
+                "success": result.success,
+                "data": {"message": result.message, "action": result.action},
+            }
+
+        elif tool_name == "remove_item":
+            pattern = arguments.get("pattern", "")
+            if not pattern:
+                return {"success": False, "error": "No pattern provided"}
+            result = await remove_item_from_today(client, pattern)
+            return {
+                "success": result.success,
+                "data": {"message": result.message, "action": result.action},
+            }
+
+        elif tool_name == "substitute_item":
+            old_pattern = arguments.get("old_pattern", "")
+            new_item = arguments.get("new_item", "")
+            if not old_pattern:
+                return {"success": False, "error": "No old_pattern provided"}
+            if not new_item:
+                return {"success": False, "error": "No new_item provided"}
+            result = await substitute_item_today(client, old_pattern, new_item)
+            return {
+                "success": result.success,
+                "data": {"message": result.message, "action": result.action},
+            }
+
+        elif tool_name == "clear_note":
+            result = await clear_note_today(client)
+            return {
+                "success": result.success,
+                "data": {"message": result.message, "action": result.action},
+            }
+
+        elif tool_name == "set_note":
+            note = arguments.get("note", "")
+            result = await set_note_today(client, note)
             return {
                 "success": result.success,
                 "data": {"message": result.message, "action": result.action},
@@ -411,7 +534,8 @@ async def basic_chat_loop(client: MCPClient, console: Console) -> None:
     console.print(
         Panel.fit(
             "[bold cyan]TimeLlama[/bold cyan] - Basic Mode\n\n"
-            "Commands: [green]sync[/green], [green]show[/green], [green]add <item>[/green], "
+            "Commands: [green]sync[/green], [green]show[/green], [green]add[/green], "
+            "[green]remove[/green], [green]replace[/green], [green]clear[/green], "
             "[green]hours[/green], [green]help[/green], [green]quit[/green]",
             title="🦙 Welcome",
         )
@@ -453,6 +577,30 @@ async def basic_chat_loop(client: MCPClient, console: Console) -> None:
                 await _handle_add(client, console, item)
             else:
                 console.print("[yellow]Usage: add <item text>[/yellow]")
+
+        elif input_lower.startswith("remove ") or input_lower.startswith("delete "):
+            pattern = user_input.split(" ", 1)[1].strip() if " " in user_input else ""
+            if pattern:
+                await _handle_remove(client, console, pattern)
+            else:
+                console.print("[yellow]Usage: remove <pattern>[/yellow]")
+
+        elif input_lower.startswith("replace ") or input_lower.startswith("substitute "):
+            # Format: replace <old> with <new>
+            parts = user_input.split(" ", 1)[1] if " " in user_input else ""
+            if " with " in parts.lower():
+                idx = parts.lower().index(" with ")
+                old_pattern = parts[:idx].strip()
+                new_item = parts[idx + 6:].strip()
+                if old_pattern and new_item:
+                    await _handle_substitute(client, console, old_pattern, new_item)
+                else:
+                    console.print("[yellow]Usage: replace <old> with <new>[/yellow]")
+            else:
+                console.print("[yellow]Usage: replace <old> with <new>[/yellow]")
+
+        elif input_lower in ("clear", "clear note"):
+            await _handle_clear(client, console)
 
         elif input_lower in ("hours", "my hours"):
             await _handle_hours(client, console)
@@ -558,6 +706,56 @@ async def _handle_add(client: MCPClient, console: Console, item: str) -> None:
         console.print(f"[red]Error adding item:[/red] {e}")
 
 
+async def _handle_remove(client: MCPClient, console: Console, pattern: str) -> None:
+    """Handle remove command."""
+    console.print(f"\n[dim]Removing item matching: {pattern}[/dim]")
+
+    try:
+        result = await remove_item_from_today(client, pattern)
+
+        if result.success:
+            console.print(f"[green]✓[/green] {result.message}")
+        else:
+            console.print(f"[red]✗[/red] {result.message}")
+
+    except Exception as e:
+        console.print(f"[red]Error removing item:[/red] {e}")
+
+
+async def _handle_substitute(
+    client: MCPClient, console: Console, old_pattern: str, new_item: str
+) -> None:
+    """Handle substitute command."""
+    console.print(f"\n[dim]Replacing '{old_pattern}' with '{new_item}'[/dim]")
+
+    try:
+        result = await substitute_item_today(client, old_pattern, new_item)
+
+        if result.success:
+            console.print(f"[green]✓[/green] {result.message}")
+        else:
+            console.print(f"[red]✗[/red] {result.message}")
+
+    except Exception as e:
+        console.print(f"[red]Error replacing item:[/red] {e}")
+
+
+async def _handle_clear(client: MCPClient, console: Console) -> None:
+    """Handle clear command."""
+    console.print("\n[dim]Clearing note...[/dim]")
+
+    try:
+        result = await clear_note_today(client)
+
+        if result.success:
+            console.print(f"[green]✓[/green] {result.message}")
+        else:
+            console.print(f"[red]✗[/red] {result.message}")
+
+    except Exception as e:
+        console.print(f"[red]Error clearing note:[/red] {e}")
+
+
 async def _handle_hours(client: MCPClient, console: Console) -> None:
     """Handle hours command."""
     console.print("\n[dim]Fetching your hours...[/dim]")
@@ -603,7 +801,10 @@ def _show_help(console: Console) -> None:
 |---------|-------------|
 | `sync` | Sync calendar events to Productive |
 | `show` | Show today's status |
-| `add <item>` | Add an item to today's log |
+| `add <item>` | Append an item to today's log |
+| `remove <pattern>` | Remove item(s) matching pattern |
+| `replace <old> with <new>` | Replace an item |
+| `clear` | Clear all items from note |
 | `hours` | Show your hours summary |
 | `help` | Show this help |
 | `quit` | Exit the chat |
@@ -613,6 +814,9 @@ def _show_help(console: Console) -> None:
 ```
 add Code review for PR #123
 add Debugging authentication issue
+remove debugging
+replace PR #123 with PR #456 review
+clear
 sync
 show
 hours

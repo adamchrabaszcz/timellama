@@ -407,25 +407,18 @@ async def get_today_status(client: MCPClient) -> dict[str, Any]:
     return result
 
 
-async def add_item_to_today(client: MCPClient, item: str) -> SyncResult:
-    """Add an item to today's time entry note.
+async def _get_today_entry_with_note(client: MCPClient) -> tuple[str | None, str | None]:
+    """Get today's entry ID and current note content.
 
-    Uses raw JSON methods for resilient parsing.
-
-    Args:
-        client: Connected MCP client
-        item: Item text to add
+    Fetches the full entry details to get the actual note.
 
     Returns:
-        SyncResult with operation details
+        Tuple of (entry_id, existing_note) or (None, None) if no entry exists
     """
+    import json
+
     today = date.today()
     today_str = today.isoformat()
-
-    # Get existing entry - try raw method first
-    today_entry = None
-    entry_id = None
-    existing_note = None
 
     try:
         raw_entries = await client.get_time_entries_raw(after=today, before=today)
@@ -443,17 +436,28 @@ async def add_item_to_today(client: MCPClient, item: str) -> SyncResult:
             if isinstance(entry, dict):
                 entry_date = entry.get("date")
                 if entry_date is None or entry_date == today_str or str(entry_date).startswith(today_str):
-                    today_entry = entry
                     # Parse numeric ID from report format
                     full_id = entry.get("id", "")
                     entry_id = _extract_numeric_id(full_id)
-                    # Extract note using Ollama
-                    note_result = extract_action_data(entry, "get_note")
-                    if note_result.get("success") and note_result.get("data"):
-                        existing_note = note_result["data"]
-                    else:
-                        existing_note = entry.get("note") or entry.get("description", "")
-                    break
+
+                    # Fetch full entry details to get actual note
+                    if entry_id:
+                        try:
+                            full_entry = await client._call_tool(
+                                client._productive_session,
+                                "get_time_entry",
+                                {"entry_id": entry_id},
+                            )
+                            if full_entry:
+                                data = json.loads(full_entry)
+                                existing_note = data.get("note", "")
+                                return entry_id, existing_note
+                        except Exception:
+                            pass
+
+                    # Fallback to report note (may be empty)
+                    existing_note = entry.get("note") or entry.get("description", "")
+                    return entry_id, existing_note
 
     except Exception:
         # Fallback to old method
@@ -461,17 +465,32 @@ async def add_item_to_today(client: MCPClient, item: str) -> SyncResult:
             entries = await client.get_time_entries(after=today, before=today)
             today_entries = [e for e in entries if e.date == today_str]
             if today_entries:
-                today_entry = {"id": today_entries[0].id}
-                entry_id = today_entries[0].id
-                existing_note = today_entries[0].note
-        except Exception as e:
-            return SyncResult(
-                success=False,
-                action="error",
-                message=f"Failed to fetch existing entries: {e}",
-            )
+                return today_entries[0].id, today_entries[0].note
+        except Exception:
+            pass
 
-    if not today_entry:
+    return None, None
+
+
+async def add_item_to_today(client: MCPClient, item: str) -> SyncResult:
+    """Add an item to today's time entry note (appends to existing).
+
+    Fetches the full entry details to preserve existing note content.
+
+    Args:
+        client: Connected MCP client
+        item: Item text to add
+
+    Returns:
+        SyncResult with operation details
+    """
+    today = date.today()
+    today_str = today.isoformat()
+
+    # Get existing entry with full note content
+    entry_id, existing_note = await _get_today_entry_with_note(client)
+
+    if not entry_id:
         # Create new entry with just this item
         html_note = f"<ul>\n<li>{item}</li>\n</ul>"
         try:
@@ -499,17 +518,11 @@ async def add_item_to_today(client: MCPClient, item: str) -> SyncResult:
                 return SyncResult(
                     success=False,
                     action="error",
-                    message=str(result["raw"]),
+                    message=str(result.get("raw", "Unknown error")),
                 )
 
-            # Extract entry ID using Ollama
-            new_entry_id = None
-            if isinstance(result, dict):
-                extracted = extract_action_data(result, "get_entry_id")
-                if extracted.get("success") and extracted.get("data"):
-                    new_entry_id = extracted["data"]
-                else:
-                    new_entry_id = result.get("id")
+            # Extract entry ID
+            new_entry_id = result.get("id") if isinstance(result, dict) else None
 
             return SyncResult(
                 success=True,
@@ -525,14 +538,16 @@ async def add_item_to_today(client: MCPClient, item: str) -> SyncResult:
                 message=f"Failed to create entry: {e}",
             )
 
-    # Update existing entry
-    existing_note = existing_note or "<ul>\n</ul>"
+    # Update existing entry - append to existing note
+    existing_note = existing_note or ""
 
     # Add item to existing list
     if "</ul>" in existing_note:
         new_note = existing_note.replace("</ul>", f"<li>{item}</li>\n</ul>")
-    else:
+    elif existing_note.strip():
         new_note = f"{existing_note}\n<ul>\n<li>{item}</li>\n</ul>"
+    else:
+        new_note = f"<ul>\n<li>{item}</li>\n</ul>"
 
     try:
         await client.update_time_entry(entry_id, note=new_note)
@@ -549,6 +564,304 @@ async def add_item_to_today(client: MCPClient, item: str) -> SyncResult:
             action="error",
             message=f"Failed to update entry: {e}",
         )
+
+
+async def remove_item_from_today(client: MCPClient, item_pattern: str) -> SyncResult:
+    """Remove an item from today's time entry note.
+
+    Args:
+        client: Connected MCP client
+        item_pattern: Item text or pattern to remove (case-insensitive partial match)
+
+    Returns:
+        SyncResult with operation details
+    """
+    import re
+
+    entry_id, existing_note = await _get_today_entry_with_note(client)
+
+    if not entry_id:
+        return SyncResult(
+            success=False,
+            action="error",
+            message="No time entry found for today",
+        )
+
+    if not existing_note:
+        return SyncResult(
+            success=False,
+            action="error",
+            message="Today's entry has no note content",
+        )
+
+    # Parse items from HTML list
+    items = _parse_note_items(existing_note)
+    pattern_lower = item_pattern.lower()
+
+    # Find and remove matching items
+    removed = []
+    remaining = []
+    for item in items:
+        if pattern_lower in item.lower():
+            removed.append(item)
+        else:
+            remaining.append(item)
+
+    if not removed:
+        return SyncResult(
+            success=False,
+            action="error",
+            message=f"No items matching '{item_pattern}' found",
+        )
+
+    # Build new note
+    new_note = _build_note_html(remaining)
+
+    try:
+        await client.update_time_entry(entry_id, note=new_note)
+        removed_str = ", ".join(removed[:3])
+        if len(removed) > 3:
+            removed_str += f" (+{len(removed) - 3} more)"
+        return SyncResult(
+            success=True,
+            action="updated",
+            message=f"Removed {len(removed)} item(s): {removed_str}",
+            time_entry_id=entry_id,
+            note_preview=new_note,
+        )
+    except Exception as e:
+        return SyncResult(
+            success=False,
+            action="error",
+            message=f"Failed to update entry: {e}",
+        )
+
+
+async def substitute_item_today(
+    client: MCPClient, old_pattern: str, new_item: str
+) -> SyncResult:
+    """Replace an item in today's time entry note.
+
+    Args:
+        client: Connected MCP client
+        old_pattern: Item text or pattern to replace (case-insensitive partial match)
+        new_item: New item text to replace with
+
+    Returns:
+        SyncResult with operation details
+    """
+    entry_id, existing_note = await _get_today_entry_with_note(client)
+
+    if not entry_id:
+        return SyncResult(
+            success=False,
+            action="error",
+            message="No time entry found for today",
+        )
+
+    if not existing_note:
+        return SyncResult(
+            success=False,
+            action="error",
+            message="Today's entry has no note content",
+        )
+
+    # Parse items from HTML list
+    items = _parse_note_items(existing_note)
+    pattern_lower = old_pattern.lower()
+
+    # Find and replace matching items
+    replaced_count = 0
+    new_items = []
+    for item in items:
+        if pattern_lower in item.lower():
+            new_items.append(new_item)
+            replaced_count += 1
+        else:
+            new_items.append(item)
+
+    if replaced_count == 0:
+        return SyncResult(
+            success=False,
+            action="error",
+            message=f"No items matching '{old_pattern}' found",
+        )
+
+    # Build new note
+    new_note = _build_note_html(new_items)
+
+    try:
+        await client.update_time_entry(entry_id, note=new_note)
+        return SyncResult(
+            success=True,
+            action="updated",
+            message=f"Replaced {replaced_count} item(s) with: {new_item}",
+            time_entry_id=entry_id,
+            note_preview=new_note,
+        )
+    except Exception as e:
+        return SyncResult(
+            success=False,
+            action="error",
+            message=f"Failed to update entry: {e}",
+        )
+
+
+async def clear_note_today(client: MCPClient) -> SyncResult:
+    """Clear today's time entry note entirely.
+
+    Args:
+        client: Connected MCP client
+
+    Returns:
+        SyncResult with operation details
+    """
+    entry_id, existing_note = await _get_today_entry_with_note(client)
+
+    if not entry_id:
+        return SyncResult(
+            success=False,
+            action="error",
+            message="No time entry found for today",
+        )
+
+    try:
+        await client.update_time_entry(entry_id, note="")
+        return SyncResult(
+            success=True,
+            action="updated",
+            message="Cleared time entry note",
+            time_entry_id=entry_id,
+            note_preview="",
+        )
+    except Exception as e:
+        return SyncResult(
+            success=False,
+            action="error",
+            message=f"Failed to update entry: {e}",
+        )
+
+
+async def set_note_today(client: MCPClient, note: str) -> SyncResult:
+    """Set today's time entry note (replaces entirely).
+
+    Args:
+        client: Connected MCP client
+        note: Full note content (can be plain text or HTML)
+
+    Returns:
+        SyncResult with operation details
+    """
+    today = date.today()
+    today_str = today.isoformat()
+
+    entry_id, _ = await _get_today_entry_with_note(client)
+
+    # Format as HTML list if plain text
+    if note and not note.strip().startswith("<"):
+        # Split by newlines and create list items
+        lines = [line.strip() for line in note.split("\n") if line.strip()]
+        html_note = "<ul>\n" + "\n".join(f"<li>{line}</li>" for line in lines) + "\n</ul>"
+    else:
+        html_note = note
+
+    if not entry_id:
+        # Create new entry
+        try:
+            result = await client.create_time_entry(
+                date_str=today_str,
+                time_minutes=480,
+                note=html_note,
+            )
+
+            if isinstance(result, dict) and result.get("needs_service_selection"):
+                services = result.get("available_services", [])
+                service_list = "\n".join(
+                    f"  - {s.get('service_name')} (ID: {s.get('service_id')}, used {s.get('count')}x)"
+                    for s in services[:5]
+                )
+                return SyncResult(
+                    success=False,
+                    action="error",
+                    message=f"Multiple services found. Set PRODUCTIVE_SERVICE_ID to one of:\n{service_list}",
+                )
+
+            if isinstance(result, dict) and (result.get("error") or ("raw" in result and "Error" in str(result.get("raw", "")))):
+                return SyncResult(
+                    success=False,
+                    action="error",
+                    message=str(result.get("raw", "Unknown error")),
+                )
+
+            new_entry_id = result.get("id") if isinstance(result, dict) else None
+
+            return SyncResult(
+                success=True,
+                action="created",
+                message="Created time entry with note",
+                time_entry_id=new_entry_id,
+                note_preview=html_note,
+            )
+        except Exception as e:
+            return SyncResult(
+                success=False,
+                action="error",
+                message=f"Failed to create entry: {e}",
+            )
+
+    try:
+        await client.update_time_entry(entry_id, note=html_note)
+        return SyncResult(
+            success=True,
+            action="updated",
+            message="Set time entry note",
+            time_entry_id=entry_id,
+            note_preview=html_note,
+        )
+    except Exception as e:
+        return SyncResult(
+            success=False,
+            action="error",
+            message=f"Failed to update entry: {e}",
+        )
+
+
+def _parse_note_items(note: str) -> list[str]:
+    """Parse list items from an HTML note.
+
+    Args:
+        note: HTML note content
+
+    Returns:
+        List of item texts (without HTML tags)
+    """
+    import re
+
+    items = []
+    # Match <li>content</li> patterns
+    pattern = r"<li>(.*?)</li>"
+    matches = re.findall(pattern, note, re.IGNORECASE | re.DOTALL)
+    for match in matches:
+        # Strip nested tags like <em>
+        clean = re.sub(r"<[^>]+>", "", match)
+        clean = clean.strip()
+        if clean:
+            items.append(clean)
+    return items
+
+
+def _build_note_html(items: list[str]) -> str:
+    """Build HTML note from list of items.
+
+    Args:
+        items: List of item texts
+
+    Returns:
+        HTML formatted note
+    """
+    if not items:
+        return ""
+    return "<ul>\n" + "\n".join(f"<li>{item}</li>" for item in items) + "\n</ul>"
 
 
 def _extract_time(dt_string: str) -> str:
