@@ -66,7 +66,7 @@ class MCPClient:
             args=[],
             env={
                 **os.environ,
-                "ICS_FILE_PATH": os.environ.get("ICS_FILE_PATH", ""),
+                "ICS_CALENDAR_URL": os.environ.get("ICS_CALENDAR_URL", ""),
             },
         )
 

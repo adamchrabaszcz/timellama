@@ -67,3 +67,4 @@ venv.bak/
 
 # Project specific
 *.ics
+.env.local

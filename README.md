@@ -58,8 +58,8 @@ PRODUCTIVE_API_TOKEN=your_api_token
 PRODUCTIVE_ORG_ID=your_org_id
 PRODUCTIVE_USER_ID=your_user_id
 
-# Required: Calendar ICS file path
-ICS_FILE_PATH=/path/to/your/calendar.ics
+# Optional: Calendar ICS URL (for calendar sync)
+ICS_CALENDAR_URL=https://outlook.office365.com/owa/calendar/.../calendar.ics
 
 # Optional: Billing period cutoff day (default: 10)
 PRODUCTIVE_BILLING_CUTOFF_DAY=10
@@ -75,14 +75,20 @@ OLLAMA_HOST=http://localhost:11434
 2. **Organization ID**: Found in your Productive URL: `app.productive.io/org-ID/...`
 3. **User ID**: Use the Productive API or check your profile settings
 
-### Exporting Your Calendar
+### Setting Up Your Calendar
+
+TimeLlama fetches calendar data from an ICS URL. Most calendar providers offer a shareable ICS link:
+
+**Outlook/Office 365**:
+1. Go to Outlook Calendar → Settings → Shared calendars
+2. Publish your calendar and copy the ICS link
+3. Set `ICS_CALENDAR_URL` to the link
 
 **Google Calendar**:
-1. Go to Google Calendar → Settings → Import & Export
-2. Export calendar as ICS
-3. Save to a location and set `ICS_FILE_PATH`
-
-**For automatic sync**, use a tool like `gcal-sync` to keep the ICS file updated.
+1. Go to Google Calendar → Settings → Settings for my calendars
+2. Select your calendar → Integrate calendar
+3. Copy the "Secret address in iCal format"
+4. Set `ICS_CALENDAR_URL` to the link
 
 ## Usage
 

@@ -21,8 +21,11 @@ load_dotenv()
 console = Console()
 
 
-def validate_environment() -> tuple[bool, list[str]]:
+def validate_environment(require_calendar: bool = False) -> tuple[bool, list[str]]:
     """Validate required environment variables.
+
+    Args:
+        require_calendar: If True, ICS_CALENDAR_URL is required
 
     Returns:
         Tuple of (is_valid, list_of_errors)
@@ -33,32 +36,33 @@ def validate_environment() -> tuple[bool, list[str]]:
         ("PRODUCTIVE_API_TOKEN", "Productive API token"),
         ("PRODUCTIVE_ORG_ID", "Productive organization ID"),
         ("PRODUCTIVE_USER_ID", "Productive user ID"),
-        ("ICS_FILE_PATH", "Calendar ICS file path"),
     ]
 
     for var, description in required_vars:
         if not os.environ.get(var):
             errors.append(f"Missing {var} ({description})")
 
-    # Check ICS file exists
-    ics_path = os.environ.get("ICS_FILE_PATH", "")
-    if ics_path and not os.path.exists(ics_path):
-        errors.append(f"ICS file not found: {ics_path}")
+    # Check calendar URL if required
+    if require_calendar:
+        calendar_url = os.environ.get("ICS_CALENDAR_URL", "")
+        if not calendar_url:
+            errors.append("Missing ICS_CALENDAR_URL (Calendar URL)")
 
     return len(errors) == 0, errors
 
 
-def check_prerequisites(require_ollama: bool = False) -> bool:
+def check_prerequisites(require_ollama: bool = False, require_calendar: bool = False) -> bool:
     """Check all prerequisites are met.
 
     Args:
         require_ollama: If True, fail if Ollama is not available
+        require_calendar: If True, fail if calendar URL is not configured
 
     Returns:
         True if prerequisites are met
     """
     # Check environment
-    env_ok, errors = validate_environment()
+    env_ok, errors = validate_environment(require_calendar=require_calendar)
     if not env_ok:
         console.print("[red]Configuration errors:[/red]")
         for error in errors:
@@ -107,7 +111,7 @@ def sync(dry_run: bool, suggestions: bool):
     Fetches calendar events and creates/updates a time entry in Productive.
     Ideal for running via cron for automated time logging.
     """
-    if not check_prerequisites():
+    if not check_prerequisites(require_calendar=True):
         sys.exit(1)
 
     async def _sync():
@@ -329,7 +333,7 @@ def doctor():
         ("PRODUCTIVE_API_TOKEN", True),
         ("PRODUCTIVE_ORG_ID", True),
         ("PRODUCTIVE_USER_ID", True),
-        ("ICS_FILE_PATH", True),
+        ("ICS_CALENDAR_URL", False),  # Optional - only needed for calendar sync
         ("PRODUCTIVE_BILLING_CUTOFF_DAY", False),
         ("OLLAMA_MODEL", False),
         ("OLLAMA_HOST", False),
@@ -341,6 +345,8 @@ def doctor():
             # Mask sensitive values
             if "TOKEN" in var or "SECRET" in var:
                 display = value[:4] + "****"
+            elif "URL" in var and len(value) > 50:
+                display = value[:50] + "..."
             else:
                 display = value
             console.print(f"  [green]✓[/green] {var}: {display}")
@@ -350,19 +356,13 @@ def doctor():
         else:
             console.print(f"  [dim]○[/dim] {var}: [dim]not set (optional)[/dim]")
 
-    # Check ICS file
-    console.print("\n[bold]Calendar File:[/bold]")
-    ics_path = os.environ.get("ICS_FILE_PATH", "")
-    if ics_path:
-        if os.path.exists(ics_path):
-            size = os.path.getsize(ics_path)
-            console.print(f"  [green]✓[/green] {ics_path} ({size} bytes)")
-        else:
-            console.print(f"  [red]✗[/red] {ics_path}: [red]file not found[/red]")
-            all_ok = False
+    # Check calendar URL
+    console.print("\n[bold]Calendar:[/bold]")
+    calendar_url = os.environ.get("ICS_CALENDAR_URL", "")
+    if calendar_url:
+        console.print(f"  [green]✓[/green] URL configured")
     else:
-        console.print(f"  [red]✗[/red] ICS_FILE_PATH not set")
-        all_ok = False
+        console.print(f"  [dim]○[/dim] ICS_CALENDAR_URL not set (optional, needed for calendar sync)")
 
     # Check Ollama
     console.print("\n[bold]Ollama:[/bold]")
