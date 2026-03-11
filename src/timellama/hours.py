@@ -11,7 +11,12 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from timellama.mcp_client import MCPClient
-from timellama.ollama_client import check_ollama_available, summarize_work
+from timellama.ollama_client import (
+    check_ollama_available,
+    extract_action_data,
+    format_for_display,
+    summarize_work,
+)
 
 
 @dataclass
@@ -37,6 +42,8 @@ async def get_employee_hours(
     before: date | None = None,
 ) -> HoursSummary:
     """Get an employee's hours summary.
+
+    Uses Ollama formatters for resilient parsing of various response formats.
 
     Args:
         client: Connected MCP client
@@ -85,9 +92,60 @@ async def get_employee_hours(
     except Exception as e:
         raise RuntimeError(f"Failed to fetch hours for {name}: {e}")
 
-    # Parse response
+    # Use Ollama formatter for resilient parsing
+    formatted = format_for_display(hours_data, "hours", context=f"Employee: {name}")
+
+    if formatted.get("success") and formatted.get("extracted"):
+        extracted = formatted["extracted"]
+
+        # Get values from formatted extraction (handles various field names)
+        total_hours = extracted.get("total_hours", 0)
+        client_hours = extracted.get("client_hours", 0)
+        internal_hours = extracted.get("internal_hours", 0)
+        holiday_hours = extracted.get("holiday_hours", 0)
+        entries = extracted.get("entries", [])
+
+        # Also try to get from raw data for backward compatibility
+        if isinstance(hours_data, dict):
+            total_hours = total_hours or hours_data.get("total_hours", 0)
+            client_hours = client_hours or hours_data.get("client_hours", 0)
+            internal_hours = internal_hours or hours_data.get("internal_hours", 0)
+            holiday_hours = holiday_hours or hours_data.get("holiday_hours", 0)
+            entries = entries or hours_data.get("entries", [])
+
+            # Handle 'time' field (minutes) if 'hours' not present
+            if not total_hours and hours_data.get("time"):
+                hours_result = extract_action_data(hours_data, "get_hours")
+                if hours_result.get("success") and hours_result.get("data"):
+                    total_hours = hours_result["data"]
+
+            # Get period info
+            period_info = hours_data.get("period", {})
+            if period_info:
+                try:
+                    start_date = date.fromisoformat(period_info.get("start", str(date.today())))
+                    end_date = date.fromisoformat(period_info.get("end", str(date.today())))
+                except (ValueError, TypeError):
+                    pass
+
+        if not start_date:
+            start_date = date.today().replace(day=1)
+        if not end_date:
+            end_date = date.today()
+
+        return HoursSummary(
+            name=hours_data.get("name", name) if isinstance(hours_data, dict) else name,
+            period_start=start_date,
+            period_end=end_date,
+            total_hours=float(total_hours) if total_hours else 0,
+            client_hours=float(client_hours) if client_hours else 0,
+            internal_hours=float(internal_hours) if internal_hours else 0,
+            holiday_hours=float(holiday_hours) if holiday_hours else 0,
+            entries=entries if isinstance(entries, list) else [],
+        )
+
+    # Fallback: parse response directly (backward compatibility)
     if isinstance(hours_data, dict):
-        # Extract data from response
         total_hours = hours_data.get("total_hours", 0)
         client_hours = hours_data.get("client_hours", 0)
         internal_hours = hours_data.get("internal_hours", 0)
@@ -95,26 +153,30 @@ async def get_employee_hours(
         entries = hours_data.get("entries", [])
         period_info = hours_data.get("period", {})
 
-        # Get actual date range from response
         if period_info:
-            start_date = date.fromisoformat(period_info.get("start", str(date.today())))
-            end_date = date.fromisoformat(period_info.get("end", str(date.today())))
-        elif not start_date:
+            try:
+                start_date = date.fromisoformat(period_info.get("start", str(date.today())))
+                end_date = date.fromisoformat(period_info.get("end", str(date.today())))
+            except (ValueError, TypeError):
+                pass
+
+        if not start_date:
             start_date = date.today().replace(day=1)
+        if not end_date:
             end_date = date.today()
 
         return HoursSummary(
             name=hours_data.get("name", name),
             period_start=start_date,
             period_end=end_date,
-            total_hours=total_hours,
-            client_hours=client_hours,
-            internal_hours=internal_hours,
-            holiday_hours=holiday_hours,
-            entries=entries,
+            total_hours=float(total_hours) if total_hours else 0,
+            client_hours=float(client_hours) if client_hours else 0,
+            internal_hours=float(internal_hours) if internal_hours else 0,
+            holiday_hours=float(holiday_hours) if holiday_hours else 0,
+            entries=entries if isinstance(entries, list) else [],
         )
 
-    # Fallback for raw response
+    # Final fallback for raw response
     return HoursSummary(
         name=name,
         period_start=start_date or date.today(),

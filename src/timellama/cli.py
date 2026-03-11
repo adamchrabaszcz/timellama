@@ -92,7 +92,7 @@ def check_prerequisites(require_ollama: bool = False, require_calendar: bool = F
 
 
 @click.group()
-@click.version_option(version="0.1.2", prog_name="timellama")
+@click.version_option(version="0.2.0", prog_name="timellama")
 def main():
     """🦙 TimeLlama - Productive.io time tracking CLI.
 
@@ -162,8 +162,12 @@ def status():
             table.add_column("Field", style="cyan")
             table.add_column("Value")
 
-            # Events
-            table.add_row("Calendar Events", str(data.get("events_count", 0)))
+            # Events - show error if present
+            calendar_error = data.get("calendar_error")
+            if calendar_error:
+                table.add_row("Calendar Events", f"[yellow]Error: {calendar_error}[/yellow]")
+            else:
+                table.add_row("Calendar Events", str(data.get("events_count", 0)))
 
             # Time entry
             entry = data.get("time_entry")
@@ -179,11 +183,23 @@ def status():
             # Show events
             events = data.get("events", [])
             if events:
-                console.print("\n[bold]Events:[/bold]")
+                console.print("\n[bold]Calendar Events:[/bold]")
                 for event in events:
                     console.print(
                         f"  • {event['summary']} [dim]({event['start']}-{event['end']})[/dim]"
                     )
+
+            # Show logged note content
+            if entry and entry.get("note"):
+                console.print("\n[bold]Logged in Productive:[/bold]")
+                note = entry["note"]
+                # Strip HTML for display
+                note = note.replace("<ul>", "").replace("</ul>", "")
+                note = note.replace("<li>", "  • ").replace("</li>", "")
+                note = note.replace("<p>", "").replace("</p>", "")
+                note = note.replace("<em>", "").replace("</em>", "")
+                note = note.replace("\n\n", "\n").strip()
+                console.print(f"[green]{note}[/green]")
 
     asyncio.run(_status())
 
@@ -333,6 +349,7 @@ def doctor():
         ("PRODUCTIVE_API_TOKEN", True),
         ("PRODUCTIVE_ORG_ID", True),
         ("PRODUCTIVE_USER_ID", True),
+        ("PRODUCTIVE_SERVICE_ID", False),  # Optional but needed for creating entries
         ("ICS_CALENDAR_URL", False),  # Optional - only needed for calendar sync
         ("PRODUCTIVE_BILLING_CUTOFF_DAY", False),
         ("OLLAMA_MODEL", False),

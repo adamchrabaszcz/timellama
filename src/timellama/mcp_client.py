@@ -99,6 +99,23 @@ class MCPClient:
                     return content.text
         return None
 
+    async def _call_tool_raw(
+        self, session: ClientSession, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Call a tool and return raw JSON response as dict.
+
+        This method is preferred for the new architecture where Ollama
+        handles the formatting instead of rigid dataclass parsing.
+        """
+        import json
+        result = await self._call_tool(session, tool_name, arguments)
+        if result:
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError:
+                return {"raw": result}
+        return {}
+
     # Calendar methods
     async def get_events_today(self) -> list[CalendarEvent]:
         """Get today's calendar events."""
@@ -107,6 +124,13 @@ class MCPClient:
 
         result = await self._call_tool(self._calendar_session, "get_events_today", {})
         return self._parse_events(result)
+
+    async def get_events_today_raw(self) -> dict[str, Any]:
+        """Get today's calendar events as raw JSON."""
+        if not self._calendar_session:
+            raise RuntimeError("Not connected to calendar server")
+
+        return await self._call_tool_raw(self._calendar_session, "get_events_today", {})
 
     async def get_events_range(
         self, start_date: date, end_date: date
@@ -124,6 +148,22 @@ class MCPClient:
             },
         )
         return self._parse_events(result)
+
+    async def get_events_range_raw(
+        self, start_date: date, end_date: date
+    ) -> dict[str, Any]:
+        """Get calendar events in a date range as raw JSON."""
+        if not self._calendar_session:
+            raise RuntimeError("Not connected to calendar server")
+
+        return await self._call_tool_raw(
+            self._calendar_session,
+            "get_events_range",
+            {
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+            },
+        )
 
     def _parse_events(self, result: str | None) -> list[CalendarEvent]:
         """Parse calendar events from MCP response."""
@@ -233,6 +273,28 @@ class MCPClient:
         )
         return self._parse_time_entries(result)
 
+    async def get_time_entries_raw(
+        self,
+        person_id: str | None = None,
+        after: date | None = None,
+        before: date | None = None,
+    ) -> dict[str, Any]:
+        """Get time entries as raw JSON with optional filters."""
+        if not self._productive_session:
+            raise RuntimeError("Not connected to productive server")
+
+        args: dict[str, Any] = {}
+        if person_id:
+            args["person_id"] = person_id
+        if after:
+            args["after"] = after.isoformat()
+        if before:
+            args["before"] = before.isoformat()
+
+        return await self._call_tool_raw(
+            self._productive_session, "get_time_entries", args
+        )
+
     def _parse_time_entries(self, result: str | None) -> list[TimeEntry]:
         """Parse time entries from MCP response."""
         if not result:
@@ -262,6 +324,77 @@ class MCPClient:
 
         return entries
 
+    async def get_recent_services(self, days: int = 14) -> list[dict[str, Any]]:
+        """Get services used in recent time entries.
+
+        Returns list of dicts with service_id, service_name, count.
+        """
+        import json
+        from datetime import timedelta
+
+        if not self._productive_session:
+            return []
+
+        today = date.today()
+        start_date = today - timedelta(days=days)
+
+        try:
+            # Get recent entry IDs from reports
+            raw = await self._call_tool_raw(
+                self._productive_session,
+                "get_time_entries",
+                {"after": start_date.isoformat(), "before": today.isoformat()},
+            )
+
+            entries = []
+            if isinstance(raw, dict):
+                entries = raw.get("entries", raw.get("data", []))
+            elif isinstance(raw, list):
+                entries = raw
+
+            # Fetch full details for each entry to get service info
+            service_counts: dict[str, dict] = {}
+            for entry in entries[:20]:  # Limit to 20 to avoid too many API calls
+                if isinstance(entry, dict):
+                    full_id = entry.get("id", "")
+                    # Parse the numeric ID from report format
+                    # e.g., "time-entry-report-time_entry-137120906-hash" -> "137120906"
+                    parts = full_id.split("-")
+                    numeric_id = None
+                    for part in reversed(parts):
+                        if part.isdigit():
+                            numeric_id = part
+                            break
+
+                    if numeric_id:
+                        try:
+                            result = await self._call_tool(
+                                self._productive_session,
+                                "get_time_entry",
+                                {"entry_id": numeric_id},
+                            )
+                            if result:
+                                data = json.loads(result)
+                                service = data.get("service", {})
+                                sid = service.get("id")
+                                sname = service.get("name", "")
+                                if sid:
+                                    if sid not in service_counts:
+                                        service_counts[sid] = {
+                                            "service_id": sid,
+                                            "service_name": sname,
+                                            "count": 0,
+                                        }
+                                    service_counts[sid]["count"] += 1
+                        except Exception:
+                            continue
+
+            # Sort by count descending
+            return sorted(service_counts.values(), key=lambda x: x["count"], reverse=True)
+
+        except Exception:
+            return []
+
     async def create_time_entry(
         self,
         date_str: str,
@@ -273,13 +406,43 @@ class MCPClient:
         if not self._productive_session:
             raise RuntimeError("Not connected to productive server")
 
+        # Convert minutes to hours for the MCP server
+        hours = time_minutes / 60
+
+        # Get default service_id from environment if not provided
+        if not service_id:
+            service_id = os.environ.get("PRODUCTIVE_SERVICE_ID")
+
+        # If still no service_id, try to detect from recent entries
+        if not service_id:
+            recent = await self.get_recent_services()
+            if len(recent) == 1:
+                # Only one service used recently - use it automatically
+                service_id = recent[0]["service_id"]
+            elif len(recent) > 1:
+                # Multiple services - return info for user to select
+                return {
+                    "needs_service_selection": True,
+                    "available_services": recent,
+                    "error": "Multiple services found in recent entries.",
+                }
+
+        if not service_id:
+            return {
+                "error": True,
+                "raw": (
+                    "Error: No service_id found.\n"
+                    "Set PRODUCTIVE_SERVICE_ID in your environment, or\n"
+                    "create at least one time entry in Productive first."
+                ),
+            }
+
         args: dict[str, Any] = {
             "date": date_str,
-            "time": time_minutes,
+            "hours": hours,
             "note": note,
+            "service_id": service_id,
         }
-        if service_id:
-            args["service_id"] = service_id
 
         result = await self._call_tool(
             self._productive_session, "create_time_entry", args
@@ -303,7 +466,8 @@ class MCPClient:
 
         args: dict[str, Any] = {"id": entry_id}
         if time_minutes is not None:
-            args["time"] = time_minutes
+            # Convert minutes to hours for the MCP server
+            args["hours"] = time_minutes / 60
         if note is not None:
             args["note"] = note
 
