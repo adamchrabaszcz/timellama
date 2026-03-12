@@ -56,6 +56,9 @@ async def get_employee_hours(
         HoursSummary with hours breakdown
     """
     # Determine date range
+    # When we calculate dates ourselves, don't pass period to MCP (it would override our dates)
+    mcp_period = None
+
     if after and before:
         start_date = after
         end_date = before
@@ -77,15 +80,16 @@ async def get_employee_hours(
         # Last day of previous month
         end_date = today.replace(day=1) - timedelta(days=1)
     else:
-        # Default: use MCP server's billing period
+        # Default: let MCP server use its billing period
         start_date = None
         end_date = None
+        mcp_period = "billing"  # Let MCP handle the period
 
     # Fetch employee hours from MCP
     try:
         hours_data = await client.get_employee_hours(
             name=name,
-            period=period,
+            period=mcp_period,
             after=start_date,
             before=end_date,
         )

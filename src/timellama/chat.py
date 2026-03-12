@@ -71,14 +71,17 @@ CHAT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_my_hours",
-            "description": "Get the user's hours summary for a time period. Use for questions about total hours, billable time, etc.",
+            "description": "Get the user's hours summary for a time period. Use for questions about total hours, billable time, etc. Calculate the dates based on user's request.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "period": {
+                    "after": {
                         "type": "string",
-                        "enum": ["current", "previous", "billing"],
-                        "description": "Time period: 'current' month, 'previous' month, or 'billing' period",
+                        "description": "Start date in YYYY-MM-DD format (e.g., '2025-02-01' for Feb 1st)",
+                    },
+                    "before": {
+                        "type": "string",
+                        "description": "End date in YYYY-MM-DD format (e.g., '2025-02-28' for Feb 28th)",
                     },
                 },
                 "required": [],
@@ -214,7 +217,7 @@ CHAT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_employee_hours",
-            "description": "Get hours summary and work log for any employee by name. Use when user asks about a specific person's hours, work, or time entries.",
+            "description": "Get hours summary and work log for any employee by name. Calculate dates based on user's request (e.g., 'last month' → previous month's dates).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -222,10 +225,13 @@ CHAT_TOOLS = [
                         "type": "string",
                         "description": "Employee name or partial name to search for (e.g., 'John', 'Jane Doe')",
                     },
-                    "period": {
+                    "after": {
                         "type": "string",
-                        "enum": ["current", "previous", "billing"],
-                        "description": "Time period: 'current' month, 'previous' month, or 'billing' period (default)",
+                        "description": "Start date in YYYY-MM-DD format",
+                    },
+                    "before": {
+                        "type": "string",
+                        "description": "End date in YYYY-MM-DD format",
                     },
                 },
                 "required": ["name"],
@@ -234,14 +240,18 @@ CHAT_TOOLS = [
     },
 ]
 
-# System prompt for the agentic chat
-SYSTEM_PROMPT = """You are TimeLlama, a helpful time tracking assistant. You help users manage their Productive.io time entries and review team hours.
+# System prompt template (date will be injected)
+SYSTEM_PROMPT_TEMPLATE = """You are TimeLlama, a helpful time tracking assistant. You help users manage their Productive.io time entries and review team hours.
+
+TODAY'S DATE: {today}
+
+IMPORTANT: All data returned by tools is REAL production data from Productive.io. Never say it's fictional, demo, or example data. Report the data exactly as returned.
 
 You have access to these tools:
 - get_events_today: Fetch today's calendar events
 - get_time_entries: Fetch time entries for date range
-- get_my_hours: Get YOUR hours summary for a period
-- get_employee_hours: Get ANY employee's hours and work log by name
+- get_my_hours: Get hours summary (pass after/before dates)
+- get_employee_hours: Get ANY employee's hours by name (pass after/before dates)
 - get_today_status: Get combined status (events + time entry)
 - sync_calendar: Sync calendar events to time entry (overwrites note with calendar events)
 - add_item: APPEND an item to today's time log (preserves existing items)
@@ -250,6 +260,17 @@ You have access to these tools:
 - clear_note: Remove all items from today's note
 - set_note: Overwrite the entire note with new content
 - format_events_to_html: Preview HTML formatting of events
+
+DATE HANDLING - VERY IMPORTANT:
+When the user mentions time periods, YOU must calculate the concrete dates:
+- "last month" / "previous month" → calculate first and last day of previous month
+- "this month" / "current month" → first day of current month to today
+- "last quarter" / "Q4 2025" → calculate quarter start/end dates
+- "past 2 weeks" → today minus 14 days to today
+- "since January" → January 1st to today
+- "February" → Feb 1 to Feb 28/29
+
+Pass these as `after` (start date) and `before` (end date) in YYYY-MM-DD format.
 
 Note operations:
 - "add" or "append" → use add_item (preserves existing)
@@ -265,6 +286,7 @@ When they ask to sync or update from calendar, use sync_calendar.
 Be concise in your responses. Format data nicely when presenting it.
 When showing work logs, list the entries with dates and notes.
 If a tool returns an error, explain it clearly to the user.
+Never add disclaimers about the data being fictional or for demonstration.
 
 You can call multiple tools if needed to answer a question completely."""
 
@@ -294,8 +316,11 @@ async def execute_tool(client: MCPClient, tool_name: str, arguments: dict) -> di
             return {"success": True, "data": data}
 
         elif tool_name == "get_my_hours":
-            period = arguments.get("period", "billing")
-            data = await client.get_my_hours(period=period if period != "billing" else None)
+            after_str = arguments.get("after")
+            before_str = arguments.get("before")
+            after = date.fromisoformat(after_str) if after_str else None
+            before = date.fromisoformat(before_str) if before_str else None
+            data = await client.get_my_hours(after=after, before=before)
             return {"success": True, "data": data}
 
         elif tool_name == "get_today_status":
@@ -372,9 +397,11 @@ async def execute_tool(client: MCPClient, tool_name: str, arguments: dict) -> di
             name = arguments.get("name", "")
             if not name:
                 return {"success": False, "error": "Employee name is required"}
-            period = arguments.get("period", "billing")
-            period_arg = None if period == "billing" else period
-            data = await client.get_employee_hours(name=name, period=period_arg)
+            after_str = arguments.get("after")
+            before_str = arguments.get("before")
+            after = date.fromisoformat(after_str) if after_str else None
+            before = date.fromisoformat(before_str) if before_str else None
+            data = await client.get_employee_hours(name=name, after=after, before=before)
             return {"success": True, "data": data}
 
         else:
@@ -407,7 +434,10 @@ async def agentic_chat_loop(client: MCPClient, console: Console) -> None:
     )
 
     # Initialize conversation history with system prompt
-    history = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Inject today's date into system prompt for accurate date calculations
+    today_str = date.today().isoformat()
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(today=today_str)
+    history = [{"role": "system", "content": system_prompt}]
 
     # Main loop
     while True:
