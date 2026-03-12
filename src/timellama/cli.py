@@ -92,7 +92,7 @@ def check_prerequisites(require_ollama: bool = False, require_calendar: bool = F
 
 
 @click.group()
-@click.version_option(version="0.3.0", prog_name="timellama")
+@click.version_option(version="0.3.1", prog_name="timellama")
 def main():
     """🦙 TimeLlama - Productive.io time tracking CLI.
 

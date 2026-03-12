@@ -281,7 +281,8 @@ Note operations:
 - "clear", "reset", "start fresh" → use clear_note
 - "set", "overwrite" → use set_note
 
-When the user asks about their own status/hours, use get_my_hours or get_today_status.
+When the user asks about today's status, use get_today_status.
+When the user asks about their own hours for a period (e.g., "my hours for February"), use get_my_hours.
 When they ask about another person (e.g., "What did John work on?", "Show me Sarah's hours"), use get_employee_hours.
 When they ask to sync or update from calendar, use sync_calendar.
 
@@ -289,6 +290,30 @@ Be concise in your responses. Format data nicely when presenting it.
 When showing work logs, list the entries with dates and notes.
 If a tool returns an error, explain it clearly to the user.
 Never add disclaimers about the data being fictional or for demonstration.
+
+HOURS DATA FORMAT - IMPORTANT:
+When showing hours data, ALWAYS display the full breakdown from the response:
+- worked: Total hours worked
+- client: Hours on client projects
+- internal: Hours on internal projects
+- paid_holiday: Paid time off hours
+- unpaid_holiday: Unpaid time off hours
+- total: Total billable hours
+
+Example response format:
+"February hours for Adam:
+- Total worked: 98h
+- Client: 80h
+- Internal: 18h
+- Holidays: 0h"
+
+Also include the period dates and any internal_notes if present in the response.
+
+HTML IN NOTES - IMPORTANT:
+Notes may contain HTML like <ul><li>...</li></ul>. When displaying notes to the user:
+- Convert <li>...</li> to bullet points (• or -)
+- Remove <ul>, </ul>, <p>, </p>, <em>, </em> tags
+- Show as a clean readable list, not raw HTML
 
 You can call multiple tools if needed to answer a question completely."""
 
