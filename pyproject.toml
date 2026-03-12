@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "timellama"
-version = "0.2.3"
+version = "0.2.4"
 description = "CLI for Productive.io time tracking with calendar sync, team hours review, and local LLM support"
 readme = "README.md"
 license = "MIT"

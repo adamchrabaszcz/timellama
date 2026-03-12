@@ -71,20 +71,20 @@ CHAT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_my_hours",
-            "description": "Get the user's hours summary for a time period. Use for questions about total hours, billable time, etc. Calculate the dates based on user's request.",
+            "description": "Get the user's hours summary. YOU MUST calculate and provide the dates - never ask the user for dates. Examples: 'February' → after=2026-02-01, before=2026-02-28. 'last month' → calculate previous month dates. 'this week' → calculate current week dates.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "after": {
                         "type": "string",
-                        "description": "Start date in YYYY-MM-DD format (e.g., '2025-02-01' for Feb 1st)",
+                        "description": "Start date YYYY-MM-DD. YOU calculate this from user's request.",
                     },
                     "before": {
                         "type": "string",
-                        "description": "End date in YYYY-MM-DD format (e.g., '2025-02-28' for Feb 28th)",
+                        "description": "End date YYYY-MM-DD. YOU calculate this from user's request.",
                     },
                 },
-                "required": [],
+                "required": ["after", "before"],
             },
         },
     },
@@ -217,24 +217,24 @@ CHAT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_employee_hours",
-            "description": "Get hours summary and work log for any employee by name. Calculate dates based on user's request (e.g., 'last month' → previous month's dates).",
+            "description": "Get employee hours by name. YOU MUST calculate dates - never ask user. Examples: 'John's hours for February' → name=John, after=2026-02-01, before=2026-02-28. 'Sarah last month' → calculate previous month. If no period specified, use current month.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Employee name or partial name to search for (e.g., 'John', 'Jane Doe')",
+                        "description": "Employee name or partial name (e.g., 'John', 'Jane Doe')",
                     },
                     "after": {
                         "type": "string",
-                        "description": "Start date in YYYY-MM-DD format",
+                        "description": "Start date YYYY-MM-DD. YOU calculate this.",
                     },
                     "before": {
                         "type": "string",
-                        "description": "End date in YYYY-MM-DD format",
+                        "description": "End date YYYY-MM-DD. YOU calculate this.",
                     },
                 },
-                "required": ["name"],
+                "required": ["name", "after", "before"],
             },
         },
     },
@@ -261,16 +261,18 @@ You have access to these tools:
 - set_note: Overwrite the entire note with new content
 - format_events_to_html: Preview HTML formatting of events
 
-DATE HANDLING - VERY IMPORTANT:
-When the user mentions time periods, YOU must calculate the concrete dates:
-- "last month" / "previous month" → calculate first and last day of previous month
-- "this month" / "current month" → first day of current month to today
-- "last quarter" / "Q4 2025" → calculate quarter start/end dates
-- "past 2 weeks" → today minus 14 days to today
-- "since January" → January 1st to today
-- "February" → Feb 1 to Feb 28/29
+DATE HANDLING - CRITICAL:
+YOU MUST calculate dates yourself. NEVER ask the user for dates. NEVER say "please provide dates".
 
-Pass these as `after` (start date) and `before` (end date) in YYYY-MM-DD format.
+Given today is {today}, calculate:
+- "February" or "Feb" → after: 2026-02-01, before: 2026-02-28
+- "last month" → after: 2026-02-01, before: 2026-02-28 (since today is March)
+- "this month" → after: 2026-03-01, before: 2026-03-12 (today)
+- "Q1 2026" → after: 2026-01-01, before: 2026-03-31
+- "past 2 weeks" → after: 2026-02-26, before: 2026-03-12
+- No period mentioned → use current month
+
+Always pass calculated `after` and `before` dates in YYYY-MM-DD format.
 
 Note operations:
 - "add" or "append" → use add_item (preserves existing)
