@@ -199,9 +199,8 @@ class MCPClient:
         self,
         after: date | None = None,
         before: date | None = None,
-        period: str | None = None,
     ) -> dict[str, Any]:
-        """Get current user's time entries."""
+        """Get current user's hours summary."""
         if not self._productive_session:
             raise RuntimeError("Not connected to productive server")
 
@@ -210,8 +209,6 @@ class MCPClient:
             args["after"] = after.isoformat()
         if before:
             args["before"] = before.isoformat()
-        if period:
-            args["period"] = period
 
         result = await self._call_tool(self._productive_session, "get_my_hours", args)
         import json
@@ -226,9 +223,8 @@ class MCPClient:
         name: str,
         after: date | None = None,
         before: date | None = None,
-        period: str | None = None,
     ) -> dict[str, Any]:
-        """Get an employee's time entries by name."""
+        """Get an employee's hours by name."""
         if not self._productive_session:
             raise RuntimeError("Not connected to productive server")
 
@@ -237,8 +233,6 @@ class MCPClient:
             args["after"] = after.isoformat()
         if before:
             args["before"] = before.isoformat()
-        if period:
-            args["period"] = period
 
         result = await self._call_tool(
             self._productive_session, "get_employee_hours", args
